@@ -1,18 +1,27 @@
-#Configurar a versão
+# Configurar a versão do Terraform e provedores
 terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
       version = ">= 3.70.0"
     }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = ">= 2.0.0"
+    }
   }
 }
 
-#Configurar o Provedor Azure
+# Configurar o Provedor Azure
 provider "azurerm" {
-  features {}
+  features {
+    key_vault {
+      purge_soft_delete_on_destroy = true
+    }
+  }
   subscription_id = "919b98ed-13b1-4386-8894-1bf04ef96d62"
 }
+
 provider "kubernetes" {
   host                   = azurerm_kubernetes_cluster.aks.kube_config.0.host
   client_certificate     = base64decode(azurerm_kubernetes_cluster.aks.kube_config.0.client_certificate)
@@ -20,15 +29,29 @@ provider "kubernetes" {
   cluster_ca_certificate = base64decode(azurerm_kubernetes_cluster.aks.kube_config.0.cluster_ca_certificate)
 }
 
-#Criar um Grupo de Recursos
-resource "azurerm_resource_group" "rg" {
-  name     = "rg-cx-aks-app"
-  location = "East US"
+# Variáveis para configuração
+variable "location" {
+  description = "Localização dos recursos"
+  type        = string
+  default     = "West US" # Alterado para uma região suportada
 }
 
-#Criar um Azure Key Vault
+variable "sql_admin_password" {
+  description = "Senha do administrador do SQL Server"
+  type        = string
+  sensitive   = true
+  default     = "P@ssw0rd123!" # Substitua por uma senha segura
+}
+
+# Criar um Grupo de Recursos
+resource "azurerm_resource_group" "rg" {
+  name     = "cx-rg-aks-app"
+  location = var.location
+}
+
+# Criar um Azure Key Vault
 resource "azurerm_key_vault" "kv" {
-  name                        = "kv-aks-app"
+  name                        = "cx-kv-aks-app-c159657"
   location                    = azurerm_resource_group.rg.location
   resource_group_name         = azurerm_resource_group.rg.name
   enabled_for_disk_encryption = true
@@ -47,16 +70,17 @@ resource "azurerm_key_vault" "kv" {
     ]
   }
 }
+
 data "azurerm_client_config" "current" {}
 
-#Criar um Banco de Dados SQL Server
+# Criar um Banco de Dados SQL Server
 resource "azurerm_mssql_server" "sql_server" {
-  name                         = "sqlserver-aks-app"
+  name                         = "cx-sqlserver-aks-app"
   resource_group_name          = azurerm_resource_group.rg.name
-  location                     = azurerm_resource_group.rg.location
+  location                     = var.location
   version                      = "12.0"
   administrator_login          = "sqladmin"
-  administrator_login_password = "P@ssw0rd123!" # Substitua por uma senha segura
+  administrator_login_password = var.sql_admin_password
 
   tags = {
     environment = "production"
@@ -64,11 +88,11 @@ resource "azurerm_mssql_server" "sql_server" {
 }
 
 resource "azurerm_mssql_database" "sql_db" {
-  name           = "sqldb-aks-app"
+  name           = "cx-sqldb-aks-app"
   server_id      = azurerm_mssql_server.sql_server.id
   collation      = "SQL_Latin1_General_CP1_CI_AS"
   license_type   = "LicenseIncluded"
-  max_size_gb    = 10
+  max_size_gb    = 2
   sku_name       = "Basic"
   zone_redundant = false
 
@@ -82,9 +106,10 @@ resource "azurerm_key_vault_secret" "db_connection_string" {
   value        = "Server=tcp:${azurerm_mssql_server.sql_server.fully_qualified_domain_name},1433;Initial Catalog=${azurerm_mssql_database.sql_db.name};Persist Security Info=False;User ID=${azurerm_mssql_server.sql_server.administrator_login};Password=${azurerm_mssql_server.sql_server.administrator_login_password};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
   key_vault_id = azurerm_key_vault.kv.id
 }
-#Criar um Cluster Kubernetes (AKS)
+
+# Criar um Cluster Kubernetes (AKS)
 resource "azurerm_kubernetes_cluster" "aks" {
-  name                = "aks-cluster"
+  name                = "cx-aks-cluster"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   dns_prefix          = "aks-cluster"
@@ -104,14 +129,14 @@ resource "azurerm_kubernetes_cluster" "aks" {
   }
 }
 
-#Configurar o Namespace no Kubernetes
+# Configurar o Namespace no Kubernetes
 resource "kubernetes_namespace" "app_namespace" {
   metadata {
     name = "app-namespace"
   }
 }
 
-#Configurar o Deployment da Aplicação
+# Configurar o Deployment da Aplicação
 resource "kubernetes_deployment" "app" {
   metadata {
     name      = "app-deployment"
@@ -119,7 +144,7 @@ resource "kubernetes_deployment" "app" {
   }
 
   spec {
-    replicas = 2
+    replicas = 1 # Reduzido para 1 réplica
 
     selector {
       match_labels = {
@@ -137,14 +162,25 @@ resource "kubernetes_deployment" "app" {
       spec {
         container {
           name  = "app-container"
-          image = "sua-imagem-docker" # Substitua pela imagem da aplicação
+          image = "schwendler/embarque-ti-spd-project:latest"
           port {
-            container_port = 8080
+            container_port = 8080 # Certifique-se de que esta porta está correta
           }
 
           env {
             name  = "SPD_KEY_VAULT_URI"
             value = azurerm_key_vault.kv.vault_uri
+          }
+
+          resources {
+            requests = {
+              cpu    = "250m"
+              memory = "512Mi"
+            }
+            limits = {
+              cpu    = "250m"
+              memory = "512Mi"
+            }
           }
         }
       }
@@ -152,8 +188,7 @@ resource "kubernetes_deployment" "app" {
   }
 }
 
-#Conceder Permissão para o AKS Acessar o Key Vault
-#Adicione uma política de acesso no Key Vault para a identidade do AKS:
+# Conceder Permissão para o AKS Acessar o Key Vault
 resource "azurerm_key_vault_access_policy" "aks" {
   key_vault_id = azurerm_key_vault.kv.id
   tenant_id    = data.azurerm_client_config.current.tenant_id
@@ -162,44 +197,4 @@ resource "azurerm_key_vault_access_policy" "aks" {
   secret_permissions = [
     "Get", "List"
   ]
-}
-#Atualize o deployment da aplicação para usar a identidade gerenciada
-resource "kubernetes_deployment" "app-att" {
-  metadata {
-    name      = "app-deployment"
-    namespace = kubernetes_namespace.app_namespace.metadata[0].name
-  }
-
-  spec {
-    replicas = 2
-
-    selector {
-      match_labels = {
-        app = "app"
-      }
-    }
-
-    template {
-      metadata {
-        labels = {
-          app = "app"
-        }
-      }
-
-      spec {
-        container {
-          name  = "app-container"
-          image = "sua-imagem-docker" # Substitua pela imagem da aplicação
-          port {
-            container_port = 8080
-          }
-
-          env {
-            name  = "SPD_KEY_VAULT_URI"
-            value = azurerm_key_vault.kv.vault_uri
-          }
-        }
-      }
-    }
-  }
 }
