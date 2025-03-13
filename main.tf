@@ -164,7 +164,7 @@ resource "azurerm_key_vault_access_policy" "aks" {
   ]
 }
 #Atualize o deployment da aplicação para usar a identidade gerenciada
-resource "kubernetes_deployment" "app" {
+resource "kubernetes_deployment" "app-att" {
   metadata {
     name      = "app-deployment"
     namespace = kubernetes_namespace.app_namespace.metadata[0].name
