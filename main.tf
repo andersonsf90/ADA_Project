@@ -3,7 +3,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = ">= 3.70.0"
+      version = ">= 4.00.0"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
@@ -17,6 +17,8 @@ provider "azurerm" {
   features {
     key_vault {
       purge_soft_delete_on_destroy = true
+      purge_soft_deleted_keys_on_destroy = true
+      purge_soft_deleted_secrets_on_destroy = true
     }
   }
   subscription_id = "919b98ed-13b1-4386-8894-1bf04ef96d62"
@@ -51,14 +53,12 @@ resource "azurerm_resource_group" "rg" {
 
 # Criar um Azure Key Vault
 resource "azurerm_key_vault" "kv" {
-  name                        = "cx-kv-aks-app-c159657"
+  name                        = "cx-kv-aks-app-xxxxxx"
   location                    = azurerm_resource_group.rg.location
   resource_group_name         = azurerm_resource_group.rg.name
   enabled_for_disk_encryption = true
   tenant_id                   = data.azurerm_client_config.current.tenant_id
-  soft_delete_retention_days  = 7
   purge_protection_enabled    = false
-
   sku_name = "standard"
 
   access_policy {
@@ -66,7 +66,16 @@ resource "azurerm_key_vault" "kv" {
     object_id = data.azurerm_client_config.current.object_id
 
     secret_permissions = [
-      "Get", "Set", "List", "Delete"
+      "Set", "Get", "Delete", "Purge", "List"
+    ]
+  }
+
+  access_policy {
+    tenant_id = data.azurerm_client_config.current.tenant_id
+    object_id = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
+
+    secret_permissions = [
+      "Get", "List"
     ]
   }
 }
@@ -75,7 +84,7 @@ data "azurerm_client_config" "current" {}
 
 # Criar um Banco de Dados SQL Server
 resource "azurerm_mssql_server" "sql_server" {
-  name                         = "cx-sqlserver-aks-app"
+  name                         = "cx-sqlserver-aks-app2"
   resource_group_name          = azurerm_resource_group.rg.name
   location                     = var.location
   version                      = "12.0"
@@ -101,12 +110,6 @@ resource "azurerm_mssql_database" "sql_db" {
   }
 }
 
-resource "azurerm_key_vault_secret" "db_connection_string" {
-  name         = "db-connection-string"
-  value        = "Server=tcp:${azurerm_mssql_server.sql_server.fully_qualified_domain_name},1433;Initial Catalog=${azurerm_mssql_database.sql_db.name};Persist Security Info=False;User ID=${azurerm_mssql_server.sql_server.administrator_login};Password=${azurerm_mssql_server.sql_server.administrator_login_password};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
-  key_vault_id = azurerm_key_vault.kv.id
-}
-
 # Criar um Cluster Kubernetes (AKS)
 resource "azurerm_kubernetes_cluster" "aks" {
   name                = "cx-aks-cluster"
@@ -123,10 +126,21 @@ resource "azurerm_kubernetes_cluster" "aks" {
   identity {
     type = "SystemAssigned"
   }
+# Logs de erro do AKS
+#  tags = {
+#    environment = "production"
+#  }
+}
 
-  tags = {
-    environment = "production"
-  }
+resource "azurerm_key_vault_secret" "db_connection_string" {
+  name         = "db-connection-string"
+  value        = "Server=tcp:${azurerm_mssql_server.sql_server.fully_qualified_domain_name},1433;Initial Catalog=${azurerm_mssql_database.sql_db.name};Persist Security Info=False;User ID=${azurerm_mssql_server.sql_server.administrator_login};Password=${azurerm_mssql_server.sql_server.administrator_login_password};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
+  key_vault_id = azurerm_key_vault.kv.id
+
+# Dependência explícita para garantir que a política de acesso seja criada antes do segredo
+  depends_on = [
+    azurerm_key_vault_access_policy.aks
+  ]
 }
 
 # Configurar o Namespace no Kubernetes
@@ -163,13 +177,19 @@ resource "kubernetes_deployment" "app" {
         container {
           name  = "app-container"
           image = "schwendler/embarque-ti-spd-project:latest"
+#          image = "ubuntu/nginx:latest"
           port {
-            container_port = 8080 # Certifique-se de que esta porta está correta
+            container_port = 8080 #Solicitaçao do projeto
           }
 
           env {
             name  = "SPD_KEY_VAULT_URI"
             value = azurerm_key_vault.kv.vault_uri
+          }
+
+          env {
+            name  = "ASPNETCORE_ENVIRONMENT"
+            value = "Development" # Habilitar modo de desenvolvimento
           }
 
           resources {
@@ -197,4 +217,61 @@ resource "azurerm_key_vault_access_policy" "aks" {
   secret_permissions = [
     "Get", "List"
   ]
+}
+
+# Habilitar o Azure RBAC para o Key Vault (Opcional)
+resource "azurerm_role_assignment" "aks_key_vault_secrets_user" {
+  scope                = azurerm_key_vault.kv.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
+}
+
+# Adicionar Regra de Firewall para o IP do AKS(Permitir Serviços do Azure)
+resource "azurerm_mssql_firewall_rule" "allow_azure_services" {
+  name             = "allow-azure-services"
+  server_id        = azurerm_mssql_server.sql_server.id
+  start_ip_address = "0.0.0.0"
+  end_ip_address   = "0.0.0.0"
+}
+
+resource "kubernetes_service" "app" {
+  metadata {
+    name      = "cx-app-service"
+    namespace = kubernetes_namespace.app_namespace.metadata[0].name
+  }
+
+  spec {
+    selector = {
+      app = "app" # Deve corresponder ao label do deployment
+    }
+
+    port {
+      port        = 8080         # Porta exposta externamente
+      target_port = 8080       # Porta do container (8080)
+      protocol    = "TCP"
+    }
+
+    type = "LoadBalancer" # Expõe o serviço externamente com um IP público
+  }
+}
+
+output "app_service_ip" {
+  value = kubernetes_service.app.status.0.load_balancer.0.ingress.0.ip
+}
+
+# Executar comandos locais
+resource "null_resource" "set_azure_subscription" {
+  provisioner "local-exec" {
+    command = "az account set --subscription 919b98ed-13b1-4386-8894-1bf04ef96d62"
+  }
+
+  depends_on = [azurerm_resource_group.rg]
+}
+
+resource "null_resource" "get_aks_credentials" {
+  provisioner "local-exec" {
+    command = "az aks get-credentials --resource-group ${azurerm_resource_group.rg.name} --name ${azurerm_kubernetes_cluster.aks.name} --overwrite-existing"
+  }
+
+  depends_on = [azurerm_kubernetes_cluster.aks]
 }
