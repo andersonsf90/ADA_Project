@@ -22,10 +22,10 @@ Fábio R de A Santos.
    ```bash
    terraform init
 
-2. **Planeje as mudanças** (se aplicável):
+2. **Planeje as mudanças:**
    ```bash
    terraform plan
 
-3. **Aplique as mudanças** (se aplicável):
+3. **Aplique as mudanças:**
    ```bash
    terraform apply
