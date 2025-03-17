@@ -51,15 +51,14 @@ resource "azurerm_resource_group" "rg" {
   location = var.location
 }
 
-# Criar um Azure Key Vault
 resource "azurerm_key_vault" "kv" {
-  name                        = "cx-kv-aks-app-xxxxxx"
+  name                        = "cx-kv-aks-app-0x"
   location                    = azurerm_resource_group.rg.location
   resource_group_name         = azurerm_resource_group.rg.name
   enabled_for_disk_encryption = true
   tenant_id                   = data.azurerm_client_config.current.tenant_id
   purge_protection_enabled    = false
-  sku_name = "standard"
+  sku_name                    = "standard"
 
   access_policy {
     tenant_id = data.azurerm_client_config.current.tenant_id
@@ -78,6 +77,7 @@ resource "azurerm_key_vault" "kv" {
       "Get", "List"
     ]
   }
+
 }
 
 data "azurerm_client_config" "current" {}
@@ -137,7 +137,6 @@ resource "azurerm_key_vault_secret" "db_connection_string" {
   value        = "Server=tcp:${azurerm_mssql_server.sql_server.fully_qualified_domain_name},1433;Initial Catalog=${azurerm_mssql_database.sql_db.name};Persist Security Info=False;User ID=${azurerm_mssql_server.sql_server.administrator_login};Password=${azurerm_mssql_server.sql_server.administrator_login_password};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
   key_vault_id = azurerm_key_vault.kv.id
 
-# Dependência explícita para garantir que a política de acesso seja criada antes do segredo
   depends_on = [
     azurerm_key_vault_access_policy.aks
   ]
