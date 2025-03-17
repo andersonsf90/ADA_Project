@@ -8,7 +8,7 @@ Este projeto provisiona a infraestrutura necessária para rodar uma aplicação 
 
 Ana Caroline Manso.\
 Anderson S de Freitas.\
-Fábio R de A Santos.\
+Fábio R de A Santos.
 
 ### Pré-requisitos
 
