@@ -6,9 +6,11 @@ Este projeto provisiona a infraestrutura necessária para rodar uma aplicação 
 
 ## Participantes
 
-Ana Caroline Manso
-Anderson S de Freitas
-Fábio R de A Santos
+Ana Caroline Manso.
+
+Anderson S de Freitas.
+
+Fábio R de A Santos.
 
 ### Pré-requisitos
 
