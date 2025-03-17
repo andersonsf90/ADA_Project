@@ -4,9 +4,11 @@ Este projeto provisiona a infraestrutura necessária para rodar uma aplicação 
 
 ---
 
-## Passo 9: Executar o Terraform
+## Participantes
 
-Siga os passos abaixo para provisionar a infraestrutura usando o Terraform.
+Ana Caroline Manso
+Anderson S de Freitas
+Fábio R de A Santos
 
 ### Pré-requisitos
 
@@ -16,7 +18,14 @@ Siga os passos abaixo para provisionar a infraestrutura usando o Terraform.
 
 ### Passos para Executar o Terraform
 
-1. **Clone o repositório** (se aplicável):
+1. **Inicie o Terraform:**
    ```bash
-   git clone https://github.com/seu-usuario/seu-repositorio.git
-   cd seu-repositorio
+   terraform init
+
+2. **Planeje as mudanças** (se aplicável):
+   ```bash
+   terraform plan
+
+3. **Aplique as mudanças** (se aplicável):
+   ```bash
+   terraform apply
